@@ -1,0 +1,15 @@
+# Ignore Python cache
+__pycache__/
+
+# Ignore downloaded images
+downloaded_images/
+
+# Ignore output directory (e.g., processed or result files)
+output/
+
+# Optional: Ignore model weights and temp files
+*.pth
+temp_*.jpg
+
+GroundingDINO/
+env/
