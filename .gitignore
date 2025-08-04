@@ -11,5 +11,9 @@ output/
 *.pth
 temp_*.jpg
 
+# Ignore large Azure files (exceed GitHub's 100MB limit)
+azure_blob_list.json
+blob_cache_webvia.pkl
+
 GroundingDINO/
 env/
