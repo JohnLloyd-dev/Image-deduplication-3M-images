@@ -48,7 +48,7 @@ SAS_URLS = [
 ] * NUM_AZURE_CONNECTIONS
 
 # Target directory in Azure container
-TARGET_DIR = "Image_Dedup_Project/TestEquity/CompleteImageDataset/Hisco/522/511/"
+TARGET_DIR = "Image_Dedup_Project/TestEquity/CompleteImageDataset/"
 
 # Worker configuration
 MIN_DOWNLOAD_WORKERS = 20  # Reduced from 100

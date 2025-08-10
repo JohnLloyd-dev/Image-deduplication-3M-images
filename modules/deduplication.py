@@ -249,7 +249,7 @@ class HierarchicalDeduplicator:
         return lsh_buckets
 
     def group_by_wavelet(self, image_paths: List[str], features: Dict[str, np.ndarray]) -> List[List[str]]:
-        """Robust wavelet grouping using multi-band LSH and union-find"""
+        """Memory-efficient wavelet grouping using LSH and union-find"""
         # Extract hashes and filter valid ones
         # Handle both dict format and direct numpy array format
         hashes = []
@@ -267,9 +267,9 @@ class HierarchicalDeduplicator:
         if not valid_hashes:
             return []
 
-        # Create multi-band LSH index
-        band_size = 8  # Size of each band
-        num_bands = 4  # Number of bands to use
+        # MEMORY FIX: Use more efficient LSH with smaller buckets
+        band_size = 16  # Increased band size for fewer buckets
+        num_bands = 2   # Reduced number of bands
         lsh_buckets = defaultdict(list)
         
         for idx, flat_hash in enumerate(valid_hashes):
@@ -302,30 +302,48 @@ class HierarchicalDeduplicator:
                 parent[ry] = rx
                 rank[rx] += 1
 
-        # Compare pairs within each bucket
-        visited_pairs = set()
-        for bucket in lsh_buckets.values():
+        # MEMORY FIX: Process buckets with size limits and immediate cleanup
+        processed_pairs = 0
+        max_bucket_size = 1000  # Limit bucket size to prevent memory explosion
+        max_pairs_per_bucket = 50000  # Limit pairs per bucket
+        
+        for bucket_key, bucket in lsh_buckets.items():
             if len(bucket) < 2:
                 continue
-                
+            
+            # Skip very large buckets to prevent memory issues
+            if len(bucket) > max_bucket_size:
+                logger.warning(f"Skipping large LSH bucket with {len(bucket)} items")
+                continue
+            
+            # Process bucket with pair limit
+            bucket_pairs = 0
             for i in range(len(bucket)):
                 idx_i = bucket[i]
                 for j in range(i+1, len(bucket)):
+                    if bucket_pairs >= max_pairs_per_bucket:
+                        logger.warning(f"Reached pair limit for bucket, skipping remaining pairs")
+                        break
+                    
                     idx_j = bucket[j]
                     
-                    # Avoid duplicate comparisons
-                    pair_key = (min(idx_i, idx_j), max(idx_i, idx_j))
-                    if pair_key in visited_pairs:
-                        continue
-                    visited_pairs.add(pair_key)
-                    
-                    # Compute full similarity
+                    # Compute similarity directly without storing pair keys
                     sim = self.compute_wavelet_similarity(
                         valid_hashes[idx_i], 
                         valid_hashes[idx_j]
                     )
                     if sim >= self.wavelet_threshold:
                         union(idx_i, idx_j)
+                    
+                    bucket_pairs += 1
+                    processed_pairs += 1
+                
+                if bucket_pairs >= max_pairs_per_bucket:
+                    break
+            
+            # Force garbage collection after each bucket
+            if processed_pairs % 10000 == 0:
+                gc.collect()
 
         # Form groups from union-find
         groups_map = defaultdict(list)
@@ -355,6 +373,7 @@ class HierarchicalDeduplicator:
         logger.info(f"- Singleton groups: {singleton_groups}")
         logger.info(f"- Multi-image groups: {multi_groups}")
         logger.info(f"- Total images: {total_images}")
+        logger.info(f"- Processed pairs: {processed_pairs:,}")
         
         return all_groups
 
@@ -1213,8 +1232,11 @@ class HierarchicalDeduplicator:
                 global_features[path] = feat
                 valid_paths.append(path)
         
+        # CRITICAL FIX: Preserve all images even if features fail to load
         if len(valid_paths) <= 1:
-            return [valid_paths] if valid_paths else []
+            # If we can't process with global features, return the original group
+            # This ensures no images are lost from the pipeline
+            return [group]
         
         # Build similarity matrix
         n = len(valid_paths)
@@ -1276,8 +1298,11 @@ class HierarchicalDeduplicator:
                 local_features[path] = feat
                 valid_paths.append(path)
         
+        # CRITICAL FIX: Preserve all images even if features fail to load
         if len(valid_paths) <= 1:
-            return [valid_paths] if valid_paths else []
+            # If we can't process with local features, return the original group
+            # This ensures no images are lost from the pipeline
+            return [group]
         
         # Build similarity matrix for local features
         n = len(valid_paths)
@@ -1507,23 +1532,80 @@ class HierarchicalDeduplicator:
             return 0.0
         
     def _compute_quality_score(self, img_path: str) -> float:
-        """Compute quality score for an image based on cached features."""
+        """Compute quality score for an image based on cached features or high-frequency content."""
         try:
-            # Use cached features to estimate quality
-            features = self.feature_cache.get(img_path, {})
+            # OPTIMIZATION: First check for cached quality score (computed in Stage 1)
+            features = self.feature_cache.get_features(img_path)
             
-            if 'global' in features and features['global'] is not None:
-                # Use global feature magnitude as a proxy for quality
+            if features and 'quality_score' in features and features['quality_score'] is not None:
+                # Use pre-computed quality score from Stage 1
+                logger.info(f"✅ Using cached quality score for {img_path}: {features['quality_score']}")
+                return float(features['quality_score'])
+            else:
+                logger.warning(f"❌ No cached quality score found for {img_path}, features: {list(features.keys()) if features else 'None'}")
+            
+            # Fallback: Use global feature magnitude as a proxy for quality
+            if features and 'global' in features and features['global'] is not None:
                 global_feat = features['global']
                 if isinstance(global_feat, np.ndarray):
                     score = float(np.linalg.norm(global_feat))
+                    logger.info(f"🔄 Using global feature magnitude as quality proxy for {img_path}: {score}")
                     return score
             
-            # Fallback: use filename length as a simple heuristic (longer names often indicate higher quality)
-            return float(len(os.path.basename(img_path)))
+            # Last resort: Try to compute high-frequency quality score from image
+            try:
+                from .azure_image_loader import load_image_from_azure
+                img = load_image_from_azure(img_path)
+                if img is not None:
+                    quality_score = self._compute_high_frequency_quality(img)
+                    logger.info(f"🔄 Computed quality score from image for {img_path}: {quality_score}")
+                    return quality_score
+            except Exception as e:
+                logger.debug(f"Could not load image for quality assessment: {e}")
+            
+            # Final fallback: use filename length as a simple heuristic
+            fallback_score = float(len(os.path.basename(img_path)))
+            logger.info(f"🔄 Using filename length as quality fallback for {img_path}: {fallback_score}")
+            return fallback_score
             
         except Exception as e:
             logger.warning(f"Quality assessment failed for {img_path}: {e}")
+            return 0.0
+    
+    def _compute_high_frequency_quality(self, img: np.ndarray) -> float:
+        """Compute quality score based on high-frequency content (image sharpness)."""
+        try:
+            import cv2
+            import numpy as np
+            
+            # Convert to grayscale if needed
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = img
+            
+            # Apply Laplacian filter to detect edges (high-frequency content)
+            laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+            
+            # Compute variance of Laplacian (measure of sharpness)
+            # Higher variance = more edges = sharper image = higher quality
+            filter_result = laplacian.var()
+            
+            # Calculate image size (number of pixels)
+            image_size = gray.shape[0] * gray.shape[1]
+            
+            # Quality score = filter_result / image_size (normalized by image size)
+            # This gives fair comparison between images of different sizes
+            quality_score = filter_result / image_size
+            
+            # Scale to reasonable range (0-100)
+            # Typical values are very small, so multiply by a large factor
+            normalized_score = min(100.0, quality_score * 1000000)
+            
+            return float(normalized_score)
+            
+        except Exception as e:
+            logger.warning(f"High-frequency quality computation failed: {e}")
             return 0.0
 
     def create_report(self, duplicate_groups: List[List[str]], 
@@ -1538,47 +1620,13 @@ class HierarchicalDeduplicator:
                 best_image = self._select_best_image(group, self.feature_cache)
                 group_size = len(group)
                 
-                # Calculate color statistics for the group
-                color_stats = {
-                    'avg_color_correlation': 0.0,
-                    'dominant_colors': []
-                }
-                
-                # Use cached features instead of trying to read image files
-                for i, img1 in enumerate(group):
-                    try:
-                        # Get features from cache instead of reading files
-                        features1 = self.feature_cache.get(img1, {})
-                        if 'color_features' in features1:
-                            color_stats['dominant_colors'].append(features1['color_features'])
-                        
-                        # Calculate color correlations using cached features
-                        for j, img2 in enumerate(group):
-                            if i != j:
-                                features2 = self.feature_cache.get(img2, {})
-                                if 'color_features' in features1 and 'color_features' in features2:
-                                    # Simple correlation calculation using cached features
-                                    color_sim = np.corrcoef(features1['color_features'], features2['color_features'])[0, 1]
-                                    if not np.isnan(color_sim):
-                                        color_stats['avg_color_correlation'] += abs(color_sim)
-                    except Exception as e:
-                        logger.warning(f"Error processing color features for {img1}: {str(e)}")
-                
-                # Calculate average color correlation for the group
-                if group_size > 1:
-                    avg_color_correlation = color_stats['avg_color_correlation'] / (group_size * (group_size - 1) / 2)
-                else:
-                    avg_color_correlation = 0.0
-                
                 # Add best image entry
                 data.append({
                     'Image Path': best_image,
                     'Quality Score': self._compute_quality_score(best_image),
                     'Group ID': group_idx + 1,
                     'Group Size': group_size,
-                    'Status': 'Best',
-                    'Avg Color Correlation': round(avg_color_correlation, 3),
-                    'Dominant Colors': len(color_stats['dominant_colors'])
+                    'Status': 'Best'
                 })
                 
                 # Add duplicate entries
@@ -1590,9 +1638,7 @@ class HierarchicalDeduplicator:
                         'Quality Score': self._compute_quality_score(dup_image),
                         'Group ID': group_idx + 1,
                         'Group Size': group_size,
-                        'Status': 'Duplicate',
-                        'Avg Color Correlation': round(avg_color_correlation, 3),
-                        'Dominant Colors': len(color_stats['dominant_colors'])
+                        'Status': 'Duplicate'
                     })
                     
             # Create DataFrame and sort by Group ID and Status (Best first)
@@ -1617,7 +1663,6 @@ class HierarchicalDeduplicator:
             logger.info(f"- Best Images: {best_images}")
             logger.info(f"- Duplicate Images: {duplicate_images}")
             logger.info(f"- Total Groups: {total_groups}")
-            logger.info(f"- Average Color Correlation: {df['Avg Color Correlation'].mean():.3f}")
             logger.info(f"- Report saved to: {report_path}")
             
             return report_path

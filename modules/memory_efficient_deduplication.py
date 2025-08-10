@@ -75,66 +75,107 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
         stage1_time = time.time() - stage1_start
         logger.info(f"✅ Stage 1 completed in {stage1_time:.1f}s - {len(wavelet_groups)} groups")
         
-        # Stage 2: Color-based verification (group-by-group)
+        # Separate singleton groups from multi-image groups for optimization
+        singleton_groups = [group for group in wavelet_groups if len(group) == 1]
+        multi_image_groups = [group for group in wavelet_groups if len(group) > 1]
+        
+        logger.info(f"📊 Group Analysis:")
+        logger.info(f"   - Singleton groups: {len(singleton_groups)} (skipping further processing)")
+        logger.info(f"   - Multi-image groups: {len(multi_image_groups)} (need deduplication)")
+        
+        # Stage 2: Color-based verification (only for multi-image groups)
         logger.info("🔄 Stage 2: Color-based verification...")
         stage2_start = time.time()
         
-        color_verified_groups = self._stage2_color_verification(
-            wavelet_groups, similarity_scores, progress_callback
-        )
+        if multi_image_groups:
+            color_verified_groups = self._stage2_color_verification(
+                multi_image_groups, similarity_scores, progress_callback
+            )
+        else:
+            color_verified_groups = []
+            logger.info("⏭️  Skipping Stage 2 - no multi-image groups to process")
+        
+        # Combine singleton groups with color-verified groups
+        all_groups_after_stage2 = singleton_groups + color_verified_groups
         self._log_memory_usage("Stage 2 - Color")
         
         stage2_time = time.time() - stage2_start
-        logger.info(f"✅ Stage 2 completed in {stage2_time:.1f}s - {len(color_verified_groups)} groups")
+        logger.info(f"✅ Stage 2 completed in {stage2_time:.1f}s - {len(all_groups_after_stage2)} total groups")
         
-        # Stage 3: Global feature refinement (subgroup-by-subgroup)
+        # Stage 3: Global feature refinement (only for multi-image groups)
         logger.info("🔄 Stage 3: Global feature refinement...")
         stage3_start = time.time()
         
-        global_refined_groups = self._stage3_global_refinement(
-            color_verified_groups, similarity_scores, progress_callback
-        )
+        if color_verified_groups:
+            global_refined_groups = self._stage3_global_refinement(
+                color_verified_groups, similarity_scores, progress_callback
+            )
+        else:
+            global_refined_groups = []
+            logger.info("⏭️  Skipping Stage 3 - no groups need global refinement")
+        
+        # Combine singleton groups with global-refined groups
+        all_groups_after_stage3 = singleton_groups + global_refined_groups
         self._log_memory_usage("Stage 3 - Global")
         
         stage3_time = time.time() - stage3_start
-        logger.info(f"✅ Stage 3 completed in {stage3_time:.1f}s - {len(global_refined_groups)} groups")
+        logger.info(f"✅ Stage 3 completed in {stage3_time:.1f}s - {len(all_groups_after_stage3)} total groups")
         
-        # Stage 4: Local feature verification (subgroup-by-subgroup)
+        # Stage 4: Local feature verification (only for multi-image groups)
         logger.info("🔄 Stage 4: Local feature verification...")
         stage4_start = time.time()
         
-        local_verified_groups = self._stage4_local_verification(
-            global_refined_groups, similarity_scores, progress_callback
-        )
+        if global_refined_groups:
+            local_verified_groups = self._stage4_local_verification(
+                global_refined_groups, similarity_scores, progress_callback
+            )
+        else:
+            local_verified_groups = []
+            logger.info("⏭️  Skipping Stage 4 - no groups need local verification")
+        
+        # Combine singleton groups with local-verified groups
+        all_groups_after_stage4 = singleton_groups + local_verified_groups
         self._log_memory_usage("Stage 4 - Local")
         
         stage4_time = time.time() - stage4_start
-        logger.info(f"✅ Stage 4 completed in {stage4_time:.1f}s - {len(local_verified_groups)} groups")
+        logger.info(f"✅ Stage 4 completed in {stage4_time:.1f}s - {len(all_groups_after_stage4)} total groups")
         
-        # Stage 5: Quality-based organization (minimal additional memory)
+        # Stage 5: Quality-based organization (all groups, including singletons)
         logger.info("🔄 Stage 5: Quality-based organization...")
         stage5_start = time.time()
         
         final_results = self._stage5_quality_organization(
-            local_verified_groups, similarity_scores, output_dir
+            all_groups_after_stage4, similarity_scores, output_dir
         )
         
         stage5_time = time.time() - stage5_start
         logger.info(f"✅ Stage 5 completed in {stage5_time:.1f}s")
         
-        # Final statistics
+        # Final statistics (include all images, including singletons)
         total_time = time.time() - total_start_time
         total_images = len(image_paths)
-        total_duplicates = sum(len(group) for group in local_verified_groups)
+        total_duplicates = sum(len(group) for group in all_groups_after_stage4)
         
         logger.info(f"\n🎉 Memory-Efficient Deduplication Complete!")
         logger.info(f"📊 Results:")
         logger.info(f"   - Total images processed: {total_images:,}")
-        logger.info(f"   - Duplicate groups found: {len(local_verified_groups)}")
+        logger.info(f"   - Duplicate groups found: {len(all_groups_after_stage4)}")
         logger.info(f"   - Total duplicate images: {total_duplicates:,}")
         logger.info(f"   - Unique images: {total_images - total_duplicates:,}")
         logger.info(f"   - Processing time: {total_time:.1f}s")
         logger.info(f"   - Processing rate: {total_images/total_time:.1f} images/second")
+        
+        # Quality score statistics
+        cached_quality_scores = 0
+        for group in all_groups_after_stage4:
+            for img_path in group:
+                features = self.feature_cache.get_features(img_path)
+                if features and 'quality_score' in features and features['quality_score'] is not None:
+                    cached_quality_scores += 1
+        
+        logger.info(f"📊 Quality Score Statistics:")
+        logger.info(f"   - Quality scores computed in Stage 1: {cached_quality_scores:,}")
+        logger.info(f"   - Quality score cache hit rate: {(cached_quality_scores/total_images)*100:.1f}%")
         
         logger.info(f"💾 Memory Statistics:")
         logger.info(f"   - Peak memory usage: {self.memory_stats['peak_memory_mb']:.1f} MB")
@@ -142,10 +183,10 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
         logger.info(f"   - Features freed: {self.memory_stats['features_freed']:,}")
         logger.info(f"   - Memory efficiency: {(self.memory_stats['features_freed']/max(self.memory_stats['features_loaded'], 1))*100:.1f}% freed")
         
-        return local_verified_groups, similarity_scores
+        return all_groups_after_stage4, similarity_scores
     
     def _stage1_wavelet_grouping(self, image_paths: List[str], progress_callback=None) -> List[List[str]]:
-        """Stage 1: Group images by wavelet hash (compute features on-demand)."""
+        """Stage 1: Group images by wavelet hash (compute features on-demand, NO image caching)."""
         
         # Initialize feature extractor for on-demand computation
         from .feature_extraction import FeatureExtractor
@@ -155,32 +196,53 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
         wavelet_features = {}
         failed_computations = 0
         
-        logger.info(f"Computing wavelet features for {len(image_paths):,} images...")
+        logger.info(f"Computing wavelet features and quality scores for {len(image_paths):,} images...")
+        logger.info("🔄 STAGE 1: Starting wavelet + quality score computation loop")
         
-        for path in tqdm(image_paths, desc="Computing wavelet features"):
+        for path in tqdm(image_paths, desc="Computing wavelet + quality scores"):
             try:
                 # Try to get from cache first
                 features = self.feature_cache.get_features(path)
-                if features and 'wavelet' in features:
-                    # Use cached feature
+                if features and 'wavelet' in features and 'quality_score' in features:
+                    # Use cached features (both wavelet and quality score)
+                    logger.debug(f"🔄 Using cached wavelet + quality features for {path}")
                     wavelet_features[path] = features['wavelet']
                     self.memory_stats['features_loaded'] += 1
                 else:
-                    # Compute wavelet feature on-demand
+                    # Need to compute features (either missing wavelet or quality score)
                     try:
-                        # Load image from Azure
+                        # Load image from Azure (NO CACHING - load, process, release immediately)
                         from .azure_image_loader import load_image_from_azure
                         img = load_image_from_azure(path)
+                        logger.debug(f"🔄 Image loaded for {path}: {img is not None}")
                         
                         if img is not None:
-                            # Compute wavelet hash using feature extractor
-                            wavelet_hash = feature_extractor.compute_wavelet_hash(img)
+                            logger.debug(f"🔄 Processing image in Stage 1: {path}")
+                            
+                            # Compute wavelet hash (either new or use cached)
+                            if features and 'wavelet' in features:
+                                wavelet_hash = features['wavelet']
+                                logger.debug(f"🔄 Using cached wavelet hash for {path}")
+                            else:
+                                wavelet_hash = feature_extractor.compute_wavelet_hash(img)
+                                logger.debug(f"🔄 Wavelet hash computed for {path}: {wavelet_hash is not None}")
+                            
                             if wavelet_hash is not None:
                                 wavelet_features[path] = wavelet_hash
-                                # Cache the computed feature
-                                if features is None:
-                                    features = {}
-                                features['wavelet'] = wavelet_hash
+                                
+                                # COMPUTE QUALITY SCORE IN STAGE 1 (as requested)
+                                logger.debug(f"🔄 Computing quality score for {path}")
+                                try:
+                                    quality_score = self._compute_high_frequency_quality(img)
+                                    logger.debug(f"✅ Quality score computed for {path}: {quality_score:.2f}")
+                                except Exception as e:
+                                    logger.error(f"❌ Failed to compute quality score for {path}: {e}")
+                                    quality_score = 0.0
+                                
+                                # Cache both wavelet and quality features (MERGE with any existing)
+                                existing = self.feature_cache.get_features(path) or {}
+                                features = {**existing, 'wavelet': wavelet_hash, 'quality_score': quality_score}
+                                logger.debug(f"💾 Caching wavelet + quality features for {path}: {list(features.keys())}")
                                 self.feature_cache.put_features(path, features)
                                 self.memory_stats['features_loaded'] += 1
                             else:
@@ -188,6 +250,9 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
                         else:
                             failed_computations += 1
                             
+                        # CRITICAL MEMORY FIX: Release image immediately after processing
+                        del img
+                        
                     except Exception as e:
                         logger.warning(f"Failed to compute wavelet feature for {path}: {e}")
                         failed_computations += 1
@@ -234,7 +299,7 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
                 continue
             
             # Skip very large groups for color verification (too expensive)
-            if len(group) > 30:
+            if len(group) > 15:  # Reduced from 30 to 15
                 logger.warning(f"Skipping color verification for large group ({len(group)} images)")
                 color_verified_groups.append(group)
                 continue
@@ -258,53 +323,102 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
     
     def _verify_group_with_color_features_efficient(self, group: List[str]) -> List[List[str]]:
         """
-        Efficient color verification that loads all images for a group once,
-        then performs all comparisons without re-downloading.
+        Memory-efficient color verification that processes images in small batches
+        to avoid loading all images for a group at once.
         """
         try:
             if len(group) < 2:
                 return [group]
             
-            # Step 1: Load all images for this group once
-            logger.debug(f"Loading {len(group)} images for color verification")
-            images = {}
-            failed_images = []
+            # MEMORY FIX: Process in smaller batches to avoid loading all images at once
+            batch_size = 5  # Process only 5 images at a time
+            subgroups = []
+            processed_images = set()
             
-            for img_path in group:
-                try:
-                    # Check if this is a test image
-                    if self._is_test_image_path(img_path):
-                        logger.debug(f"Skipping Azure download for test image: {img_path}")
+            logger.debug(f"Processing color verification for group of {len(group)} images in batches of {batch_size}")
+            
+            for i in range(0, len(group), batch_size):
+                batch = group[i:i + batch_size]
+                logger.debug(f"Processing batch {i//batch_size + 1}: {len(batch)} images")
+                
+                # Load images for this batch only
+                batch_images = {}
+                failed_images = []
+                
+                for img_path in batch:
+                    if img_path in processed_images:
                         continue
-                    
-                    # Download image from Azure
-                    from .azure_image_loader import load_image_from_azure
-                    img = load_image_from_azure(img_path)
-                    
-                    if img is not None:
-                        images[img_path] = img
-                    else:
-                        failed_images.append(img_path)
-                        logger.warning(f"Failed to load image: {img_path}")
                         
-                except Exception as e:
-                    failed_images.append(img_path)
-                    logger.warning(f"Error loading image {img_path}: {e}")
+                    try:
+                        # Check if this is a test image
+                        if self._is_test_image_path(img_path):
+                            logger.debug(f"Skipping Azure download for test image: {img_path}")
+                            failed_images.append(img_path)
+                            continue
+                        
+                        # Download image from Azure with timeout
+                        from .azure_image_loader import load_image_from_azure
+                        img = load_image_from_azure(img_path)
+                        
+                        if img is not None:
+                            batch_images[img_path] = img
+                        else:
+                            failed_images.append(img_path)
+                            logger.warning(f"Failed to load image: {img_path}")
+                            
+                    except Exception as e:
+                        failed_images.append(img_path)
+                        logger.warning(f"Error loading image {img_path}: {e}")
+                
+                # Process batch comparisons
+                if len(batch_images) > 1:
+                    batch_subgroups = self._process_color_batch(batch_images)
+                    subgroups.extend(batch_subgroups)
+                else:
+                    # Add individual images as separate groups
+                    for img_path in batch_images:
+                        subgroups.append([img_path])
+                
+                # Add failed images as individual groups
+                for failed_img in failed_images:
+                    subgroups.append([failed_img])
+                
+                # Mark as processed
+                processed_images.update(batch_images.keys())
+                processed_images.update(failed_images)
+                
+                # CRITICAL MEMORY FIX: Release batch images immediately
+                del batch_images
+                gc.collect()
             
-            # Step 2: Perform all comparisons using loaded images
-            logger.debug(f"Performing color comparisons for {len(images)} loaded images")
+            # Merge subgroups that might be duplicates
+            final_subgroups = self._merge_similar_subgroups(subgroups)
             
-            # Build similarity matrix
+            logger.debug(f"Color verification complete: {len(group)} -> {len(final_subgroups)} subgroups")
+            return final_subgroups
+            
+        except Exception as e:
+            logger.error(f"Color verification failed for group: {e}")
+            return [group]
+    
+    def _process_color_batch(self, batch_images: Dict[str, np.ndarray]) -> List[List[str]]:
+        """Process a small batch of images for color similarity."""
+        try:
+            if len(batch_images) <= 1:
+                return [list(batch_images.keys())]
+            
+            # Build similarity matrix for this batch only
             similarity_matrix = {}
-            for i, img1_path in enumerate(images.keys()):
-                for j, img2_path in enumerate(images.keys()):
-                    if i >= j:  # Skip self-comparison and duplicate comparisons
-                        continue
+            img_paths = list(batch_images.keys())
+            
+            for i, img1_path in enumerate(img_paths):
+                for j in range(i+1, len(img_paths)):
+                    img2_path = img_paths[j]
                     
                     try:
                         # Compute color similarity using loaded images
                         similarity = self._compute_color_similarity_from_images(
-                            images[img1_path], images[img2_path]
+                            batch_images[img1_path], batch_images[img2_path]
                         )
                         similarity_matrix[(img1_path, img2_path)] = similarity
                         
@@ -312,23 +426,49 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
                         logger.warning(f"Error computing similarity for {img1_path}, {img2_path}: {e}")
                         similarity_matrix[(img1_path, img2_path)] = 0.0
             
-            # Step 3: Group images based on color similarity
-            subgroups = self._group_by_color_similarity(list(images.keys()), similarity_matrix)
+            # Group images based on color similarity
+            batch_subgroups = self._group_by_color_similarity(img_paths, similarity_matrix)
             
-            # Step 4: Add failed images as individual groups
-            for failed_img in failed_images:
-                subgroups.append([failed_img])
-            
-            # Step 5: Clean up loaded images immediately
-            del images
-            gc.collect()
-            
-            logger.debug(f"Color verification complete: {len(group)} -> {len(subgroups)} subgroups")
-            return subgroups
+            return batch_subgroups
             
         except Exception as e:
-            logger.error(f"Color verification failed for group: {e}")
-            return [group]
+            logger.error(f"Error processing color batch: {e}")
+            return [list(batch_images.keys())]
+    
+    def _merge_similar_subgroups(self, subgroups: List[List[str]]) -> List[List[str]]:
+        """Merge subgroups that might contain the same images across batches."""
+        try:
+            if len(subgroups) <= 1:
+                return subgroups
+            
+            # Create a mapping of image to group
+            image_to_group = {}
+            merged_groups = []
+            
+            for group in subgroups:
+                for img_path in group:
+                    if img_path in image_to_group:
+                        # Merge groups
+                        existing_group_idx = image_to_group[img_path]
+                        existing_group = merged_groups[existing_group_idx]
+                        
+                        # Add new images to existing group
+                        for new_img in group:
+                            if new_img not in existing_group:
+                                existing_group.append(new_img)
+                                image_to_group[new_img] = existing_group_idx
+                    else:
+                        # Create new group
+                        merged_groups.append(group.copy())
+                        group_idx = len(merged_groups) - 1
+                        for img_path in group:
+                            image_to_group[img_path] = group_idx
+            
+            return merged_groups
+            
+        except Exception as e:
+            logger.error(f"Error merging subgroups: {e}")
+            return subgroups
     
     def _compute_color_similarity_from_images(self, img1: np.ndarray, img2: np.ndarray) -> float:
         """
@@ -487,8 +627,31 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
                 if pattern in lower_path:
                     return True
             
-            # Check for very short or suspicious paths
-            if len(image_path) < 10 or 'test' in lower_path:
+            # Check for very short or suspicious paths (e.g., empty string, very short names)
+            if len(image_path) < 5: # Adjusted minimum length
+                return True
+            
+            # Check for common test image patterns, ensuring they are distinct parts of the path
+            # Use regex or more specific string matching if 'test' can appear legitimately
+            # For now, let's be more specific about common test file prefixes/suffixes
+            test_patterns = ['/test_', '_test.', '/dummy_', '_dummy.', '/sample_', '_sample.',
+                             '/mock_', '_mock.', '/fake_', '_fake.', '/placeholder', '/example',
+                             '/demo', '/temp_', '_temp.', '/tmp_', '_tmp.']
+            for pattern in test_patterns:
+                if pattern in lower_path:
+                    return True
+            
+            # Exclude specific legitimate paths that might contain "test" as part of a larger word
+            # e.g., "TestEquity" should not be flagged as a test path
+            if "testequity" in lower_path:
+                return False # This is a legitimate path, do not treat as test
+            
+            # Original broad 'test' check removed as it caused false positives
+            # if 'test' in lower_path:
+            #     return True
+            
+            # Final check for very short or suspicious paths (redundant with len < 5 check above, but kept for clarity)
+            if len(image_path) < 10: # This check is less critical now with more specific patterns
                 return True
             
             return False
@@ -509,10 +672,10 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
                 continue
             
             # Skip very large groups (memory protection)
-            if len(group) > 100:
+            if len(group) > 50:  # Reduced from 100 to 50
                 logger.warning(f"Splitting large group ({len(group)} images) for memory efficiency")
                 # Process in chunks
-                chunk_size = 50
+                chunk_size = 25  # Reduced from 50 to 25
                 for j in range(0, len(group), chunk_size):
                     chunk = group[j:j + chunk_size]
                     if len(chunk) > 1:
@@ -533,6 +696,8 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
             
             if not group_global_features:
                 logger.warning(f"No global features found for group of {len(group)} images")
+                # CRITICAL FIX: Preserve the group even if features fail to load
+                global_refined_groups.append(group)
                 continue
             
             # Process this group
@@ -569,7 +734,7 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
                 continue
             
             # Skip very large groups for local verification (too expensive)
-            if len(group) > 50:
+            if len(group) > 25:  # Reduced from 50 to 25
                 logger.warning(f"Skipping local verification for large group ({len(group)} images)")
                 local_verified_groups.append(group)
                 continue
@@ -579,6 +744,7 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
             
             if not group_local_features:
                 logger.warning(f"No local features found for group of {len(group)} images")
+                # CRITICAL FIX: Preserve the group even if features fail to load
                 local_verified_groups.append(group)  # Keep the group as-is
                 continue
             
@@ -606,9 +772,26 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
     
     def _stage5_quality_organization(self, final_groups: List[List[str]], 
                                    similarity_scores: Dict, output_dir: str) -> Dict:
-        """Stage 5: Quality-based organization and best image selection."""
+        """Stage 5: Quality-based organization and best image selection using cached quality scores."""
         
-        # This stage uses minimal additional memory
+        logger.info("🔄 Stage 5: Using cached quality scores from Stage 1 for best image selection...")
+        
+        # Count how many quality scores we expect to have cached
+        total_images = sum(len(group) for group in final_groups)
+        cached_quality_scores = 0
+        
+        for group in final_groups:
+            for img_path in group:
+                features = self.feature_cache.get_features(img_path)
+                if features and 'quality_score' in features and features['quality_score'] is not None:
+                    cached_quality_scores += 1
+        
+        logger.info(f"📊 Quality Score Cache Status:")
+        logger.info(f"   - Total images: {total_images}")
+        logger.info(f"   - Cached quality scores: {cached_quality_scores}")
+        logger.info(f"   - Cache hit rate: {(cached_quality_scores/total_images)*100:.1f}%")
+        
+        # This stage uses minimal additional memory - quality scores are already cached from Stage 1
         organized_results = self._organize_duplicate_groups_with_quality_selection(
             final_groups, {}, similarity_scores  # Empty features dict since we load on-demand
         )
@@ -685,6 +868,43 @@ class MemoryEfficientDeduplicator(HierarchicalDeduplicator):
         
         return features
     
+    def _compute_high_frequency_quality(self, img: np.ndarray) -> float:
+        """Compute quality score based on high-frequency content (image sharpness)."""
+        logger.debug(f"🔄 _compute_high_frequency_quality called with image shape: {img.shape}")
+        try:
+            import cv2
+            import numpy as np
+            
+            # Convert to grayscale if needed
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = img
+            
+            # Apply Laplacian filter to detect edges (high-frequency content)
+            laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+            
+            # Compute variance of Laplacian (measure of sharpness)
+            # Higher variance = more edges = sharper image = higher quality
+            filter_result = laplacian.var()
+            
+            # Calculate image size (number of pixels)
+            image_size = gray.shape[0] * gray.shape[1]
+            
+            # Quality score = filter_result / image_size (normalized by image size)
+            # This gives fair comparison between images of different sizes
+            quality_score = filter_result / image_size
+            
+            # Scale to reasonable range (0-100)
+            # Typical values are very small, so multiply by a large factor
+            normalized_score = min(100.0, quality_score * 1000000)
+            
+            return float(normalized_score)
+            
+        except Exception as e:
+            logger.warning(f"High-frequency quality computation failed: {e}")
+            return 0.0
+
     def _log_memory_usage(self, stage_name: str):
         """Log current memory usage for a stage."""
         try:

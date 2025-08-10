@@ -93,11 +93,12 @@ class AzureBlobManager:
     def download_as_cv2(self, blob_name: str) -> Optional[np.ndarray]:
         """Download blob and return as cv2 image with rate limiting."""
         for attempt in range(self.max_retries):
-            try:                # Apply rate limiting
+            try:
+                # Apply rate limiting
                 self.rate_limiter.wait()
                 
                 blob_client = self.container_client.get_blob_client(blob_name)
-                data = blob_client.download_blob().readall()
+                data = blob_client.download_blob(timeout=30).readall()  # Added 30 second timeout
                 
                 # Convert to numpy array
                 nparr = np.frombuffer(data, np.uint8)
@@ -411,7 +412,7 @@ def download_images_from_azure(
     return results
 
 class AzureBlobManager:
-    def __init__(self, sas_url: str = None, max_concurrent_downloads: int = 3000, max_retries: int = 3):
+    def __init__(self, sas_url: str = None, max_concurrent_downloads: int = 100, max_retries: int = 3):  # Reduced from 3000 to 100
         """Initialize the Azure Blob Manager.
         
         Args:
@@ -605,7 +606,7 @@ class AzureBlobManager:
         
         return False
 
-    def batch_download(self, blob_names: List[str], max_workers: int = None) -> Generator[tuple[str, Optional[np.ndarray]], None, None]:
+    def batch_download(self, blob_names: List[str], max_workers: int = 20) -> Generator[tuple[str, Optional[np.ndarray]], None, None]:  # Reduced from None to 20
         """Download multiple blobs concurrently with optimized threading."""
         if max_workers is None:
             # Calculate optimal number of workers based on system

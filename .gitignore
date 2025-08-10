@@ -15,5 +15,32 @@ temp_*.jpg
 azure_blob_list.json
 blob_cache_webvia.pkl
 
+# Ignore feature files and cache files
+*.pkl
+*.pickle
+features/
+feature_cache/
+cache/
+
+# Ignore temporary and log files
+*.log
+*.tmp
+temp/
+logs/
+
+# Ignore test output and reports
+test_*.csv
+*_report.csv
+reports/
+
+# Ignore environment and IDE files
 GroundingDINO/
 env/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
