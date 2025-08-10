@@ -38,15 +38,23 @@ except ImportError:
 
 from azure_utils import AzureBlobManager, SAS_URL
 
-# Configure logging
+# Configure logging with Windows-compatible encoding
 log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
-handlers = [logging.StreamHandler(sys.stdout)]
+
+# Create handlers with proper encoding for Windows
+handlers = []
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+handlers.append(stdout_handler)
+
 if LOG_TO_FILE:
-    handlers.append(logging.FileHandler(LOG_FILE_NAME))
+    # Use UTF-8 encoding for log file to avoid Windows encoding issues
+    file_handler = logging.FileHandler(LOG_FILE_NAME, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    handlers.append(file_handler)
 
 logging.basicConfig(
     level=log_level,
-    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=handlers
 )
 logger = logging.getLogger(__name__)
@@ -152,11 +160,11 @@ class AzureImageCopier:
                 if success:
                     results[image_path] = True
                     successful_copies += 1
-                    logger.info(f"✓ Copied {filename} ({i}/{len(image_paths)})")
+                    logger.info(f"[OK] Copied {filename} ({i}/{len(image_paths)})")
                 else:
                     results[image_path] = False
                     failed_copies += 1
-                    logger.error(f"✗ Failed to copy {filename}")
+                    logger.error(f"[FAIL] Failed to copy {filename}")
                 
                 # Progress update based on batch size
                 if i % BATCH_SIZE == 0:
@@ -169,7 +177,7 @@ class AzureImageCopier:
             except Exception as e:
                 results[image_path] = False
                 failed_copies += 1
-                logger.error(f"✗ Error copying {image_path}: {e}")
+                logger.error(f"[ERROR] Error copying {image_path}: {e}")
         
         # Summary
         logger.info(f"Copy operation completed for {image_type}:")
@@ -264,10 +272,10 @@ def main():
         return True
         
     except KeyboardInterrupt:
-        logger.warning("⚠️  Process interrupted by user")
+        logger.warning("[INTERRUPT] Process interrupted by user")
         return False
     except Exception as e:
-        logger.error(f"❌ Azure copy process failed: {e}")
+        logger.error(f"[FAILED] Azure copy process failed: {e}")
         return False
 
 
