@@ -36,7 +36,7 @@ A high-performance, memory-optimized image deduplication pipeline designed to ha
 
 ```
 Image-deduplication-3M-images/
-├── modules/
+├── modules/                          # Core application modules
 │   ├── memory_efficient_deduplication.py  # Main deduplication logic
 │   ├── deduplication.py                   # Core deduplication methods
 │   ├── feature_extraction.py              # Feature computation
@@ -44,12 +44,15 @@ Image-deduplication-3M-images/
 │   ├── azure_utils.py                     # Azure Blob Storage utilities
 │   └── distributed_processor.py           # Distributed processing
 ├── tests/                                 # Test suites
+│   └── performance/                       # Performance and integration tests
 ├── docs/                                  # Documentation
+│   └── technical/                         # Technical documentation
 ├── scripts/                               # Utility scripts
+│   └── utilities/                         # Development utilities
 ├── main.py                                # Main entry point
 ├── pipeline.py                            # Pipeline orchestration
 ├── requirements.txt                       # Dependencies
-└── OPTIMIZATION_SUMMARY.md               # Detailed optimization guide
+└── setup.py                               # Package setup
 ```
 
 ## 🚀 Quick Start
@@ -129,9 +132,39 @@ report_path = deduplicator.create_report(final_groups, similarity_scores, "./res
 
 ## 📚 Documentation
 
+### **Core Documentation**
 - **[OPTIMIZATION_SUMMARY.md](OPTIMIZATION_SUMMARY.md)** - Detailed optimization guide
 - **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** - Project organization
-- **[docs/](docs/)** - Technical documentation
+- **[MEMORY_FIXES_SUMMARY.md](MEMORY_FIXES_SUMMARY.md)** - Memory optimization details
+
+### **Technical Documentation** (`docs/technical/`)
+- **Implementation Guides**: Detailed technical documentation
+- **Fix Documentation**: Problem analysis and solutions
+- **Performance Analysis**: Optimization strategies
+- **Process Documentation**: Pipeline workflow details
+
+### **Azure Operations**
+- **[README_AZURE_COPY.md](README_AZURE_COPY.md)** - Azure copy operations guide
+- **[copy_images_to_azure.py](copy_images_to_azure.py)** - Azure copy utility
+
+## 🧪 Testing
+
+### **Performance Tests** (`tests/performance/`)
+- **Comprehensive testing**: Multi-threading, memory efficiency, Azure operations
+- **Large dataset validation**: Scalability testing for 3M+ images
+- **Memory optimization**: Feature caching and cleanup validation
+
+### **Run Tests**
+```bash
+# Run comprehensive tests
+python tests/performance/test_comprehensive.py
+
+# Test memory efficiency
+python tests/performance/test_memory_efficiency.py
+
+# Test Azure operations
+python tests/performance/test_azure_image_list.py
+```
 
 ## 🤝 Contributing
 
