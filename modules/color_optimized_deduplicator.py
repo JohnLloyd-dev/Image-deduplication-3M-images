@@ -511,6 +511,91 @@ class ColorOptimizedDeduplicator(MemoryEfficientDeduplicator):
             logger.warning(f"Color feature extraction from array failed: {e}")
             return None
 
+    def deduplicate_memory_efficient(
+        self, 
+        image_paths: List[str], 
+        output_dir: str,
+        progress_callback: Optional[Callable] = None
+    ) -> Tuple[List[List[str]], Dict[Tuple[str, str], float]]:
+        """
+        Memory-efficient deduplication using the parent class method.
+        This ensures compatibility with the WHash integration.
+        
+        Args:
+            image_paths: List of image paths to deduplicate
+            output_dir: Output directory for results
+            progress_callback: Optional progress callback function
+            
+        Returns:
+            Tuple of (final_groups, similarity_scores)
+        """
+        # Call the parent class method for memory-efficient processing
+        return super().deduplicate_memory_efficient(image_paths, output_dir, progress_callback)
+
+    def deduplicate_with_whash_integration(
+        self,
+        image_paths: List[str],
+        output_dir: str,
+        whash_deduplicator=None,
+        progress_callback: Optional[Callable] = None
+    ) -> Tuple[List[List[str]], Dict[Tuple[str, str], float]]:
+        """
+        Deduplication with optional WHash integration.
+        
+        Args:
+            image_paths: List of image paths to deduplicate
+            output_dir: Output directory for results
+            whash_deduplicator: Optional WHash deduplicator for pre-grouping
+            progress_callback: Optional progress callback function
+            
+        Returns:
+            Tuple of (final_groups, similarity_scores)
+        """
+        if whash_deduplicator:
+            logger.info("🚀 Using WHash-Color integrated deduplication...")
+            try:
+                # Use WHash for pre-grouping
+                whash_groups = whash_deduplicator.group_by_whash(image_paths, progress_callback=progress_callback)
+                
+                # Filter groups
+                multi_image_groups = [group for group in whash_groups if len(group) > 1]
+                single_images = [group[0] for group in whash_groups if len(group) == 1]
+                
+                logger.info(f"WHash pre-grouping: {len(multi_image_groups)} groups, {len(single_images)} singles")
+                
+                # Process multi-image groups with color pipeline
+                all_duplicate_groups = []
+                all_similarity_scores = {}
+                
+                for i, group in enumerate(multi_image_groups):
+                    if progress_callback:
+                        progress_callback(f"Processing WHash group {i+1}/{len(multi_image_groups)}")
+                    
+                    try:
+                        group_duplicates, group_scores = self.deduplicate_with_color_prefiltering(
+                            group, output_dir, progress_callback
+                        )
+                        all_duplicate_groups.extend(group_duplicates)
+                        all_similarity_scores.update(group_scores)
+                    except Exception as e:
+                        logger.error(f"WHash group {i} processing failed: {e}")
+                        all_duplicate_groups.append(group)
+                
+                # Add single images
+                for img in single_images:
+                    all_duplicate_groups.append([img])
+                
+                logger.info(f"WHash-Color integration complete: {len(all_duplicate_groups)} groups")
+                return all_duplicate_groups, all_similarity_scores
+                
+            except Exception as e:
+                logger.warning(f"WHash integration failed: {e}, falling back to color-only")
+                return self.deduplicate_with_color_prefiltering(image_paths, output_dir, progress_callback)
+        else:
+            # No WHash, use color-only
+            logger.info("🎨 Using color-only deduplication...")
+            return self.deduplicate_with_color_prefiltering(image_paths, output_dir, progress_callback)
+
     def deduplicate_with_color_prefiltering(
         self, 
         image_paths: List[str], 

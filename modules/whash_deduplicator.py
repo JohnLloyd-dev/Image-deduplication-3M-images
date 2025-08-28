@@ -477,9 +477,14 @@ class WHashDeduplicator:
         """
         logger.info("Integrating WHash with color-optimized pipeline...")
         
-        # Store original method
+        # Store original method - try both possible method names
         original_deduplicate = getattr(color_optimized_deduplicator, 
                                      'deduplicate_with_color_prefiltering', None)
+        
+        if original_deduplicate is None:
+            # Fallback to memory-efficient method if color method not available
+            original_deduplicate = getattr(color_optimized_deduplicator, 
+                                         'deduplicate_memory_efficient', None)
         
         if original_deduplicate is None:
             logger.warning("Color deduplicator doesn't have expected method. "

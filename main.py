@@ -21,6 +21,8 @@ os.environ['LOKY_MAX_CPU_COUNT'] = '8'  # Increased CPU usage for full dataset
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from modules.memory_efficient_deduplication import create_memory_efficient_deduplicator
+from modules.color_optimized_deduplicator import create_color_optimized_deduplicator
+from modules.whash_deduplicator import create_whash_deduplicator
 from modules.feature_cache import BoundedFeatureCache
 from modules.azure_utils import AzureBlobManager
 
@@ -59,19 +61,42 @@ def main():
         all_images = image_paths
         logger.info(f"📊 Processing ALL {len(all_images)} images from the dataset")
         
-        # Create optimized deduplicator with larger cache for full dataset
-        deduplicator = create_memory_efficient_deduplicator(
-            feature_cache=BoundedFeatureCache(max_size=2000)  # Increased for full dataset
+        # Create integrated WHash-Color deduplicator for optimal performance
+        logger.info("🔧 Creating integrated WHash-Color deduplicator...")
+        
+        # Create color-optimized deduplicator
+        color_deduplicator = create_color_optimized_deduplicator(
+            feature_cache=BoundedFeatureCache(max_size=2000),  # Increased for full dataset
+            color_clusters=2000,
+            parallel_processing=True,
+            max_workers=8
         )
+        
+        # Create WHash deduplicator and integrate it
+        whash_deduplicator = create_whash_deduplicator(
+            hash_size=8,
+            wavelet_level=2,
+            threshold=0.85,
+            enable_lsh=True,
+            lsh_bands=4,
+            lsh_rows_per_band=4
+        )
+        
+        # Use the integrated deduplicator directly
+        deduplicator = color_deduplicator
+        whash_deduplicator = whash_deduplicator  # Keep reference for integration
+        
+        logger.info("✅ WHash-Color deduplicators created!")
         
         # Force garbage collection before starting
         gc.collect()
         
-        # Run the complete deduplication pipeline
-        logger.info("🔄 Running optimized deduplication pipeline...")
-        final_groups, similarity_scores = deduplicator.deduplicate_memory_efficient(
+        # Run the complete integrated deduplication pipeline
+        logger.info("🔄 Running WHash-Color integrated deduplication pipeline...")
+        final_groups, similarity_scores = deduplicator.deduplicate_with_whash_integration(
             image_paths=all_images,
-            output_dir=temp_dir
+            output_dir=temp_dir,
+            whash_deduplicator=whash_deduplicator
         )
         
         # Force garbage collection after pipeline

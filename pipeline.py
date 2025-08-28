@@ -30,6 +30,8 @@ from modules.azure_utils import (
 from modules.feature_extraction import FeatureExtractor
 from modules.deduplication import Deduplicator
 from modules.memory_efficient_deduplication import MemoryEfficientDeduplicator
+from modules.color_optimized_deduplicator import ColorOptimizedDeduplicator, create_color_optimized_deduplicator
+from modules.whash_deduplicator import WHashDeduplicator, create_whash_deduplicator
 from modules.multithreaded_deduplication import MultiThreadedDeduplicator
 from modules.threading_optimizer import create_optimized_deduplicator
 from modules.distributed_processor import DistributedProcessor
