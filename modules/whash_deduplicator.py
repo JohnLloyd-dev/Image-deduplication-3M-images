@@ -552,6 +552,10 @@ class WHashDeduplicator:
         """Get performance statistics."""
         return self.stats.copy()
     
+    def get_performance_stats(self) -> Dict:
+        """Get performance statistics (alias for get_stats)."""
+        return self.get_stats()
+    
     def reset_stats(self):
         """Reset performance statistics."""
         self.stats = {
@@ -561,6 +565,15 @@ class WHashDeduplicator:
             'processing_time': 0.0,
             'memory_usage_mb': 0.0
         }
+    
+    def release(self):
+        """Release resources."""
+        try:
+            if hasattr(self, 'azure_manager'):
+                self.azure_manager.close()
+            logger.info("WHash deduplicator resources released")
+        except Exception as e:
+            logger.warning(f"Error releasing resources: {e}")
     
     def __str__(self) -> str:
         """String representation of the WHash deduplicator."""

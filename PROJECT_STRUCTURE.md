@@ -144,15 +144,15 @@ python -m pytest tests/ -v
 ```
 
 ### Running Examples
-```bash
+   ```bash
 # WHash-Color integration demo
 python examples/whash_color_integration_example.py
-```
+   ```
 
 ### Main Application
-```bash
+   ```bash
 # Main deduplication pipeline
-python main.py
+   python main.py
 
 # Pipeline orchestration
 python pipeline.py

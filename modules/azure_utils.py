@@ -251,7 +251,9 @@ def download_blob_to_memory(blob_name: str, sas_url: str) -> bytes:
         # Construct full URL for the blob
         parsed_url = urlparse(sas_url)
         container_name = get_container_name_from_sas(sas_url)
-        blob_url = f"{parsed_url.scheme}://{parsed_url.netloc}/{container_name}/{blob_name}{parsed_url.query}"
+        # Add proper separator between blob path and query parameters
+        query_separator = "?" if parsed_url.query else ""
+        blob_url = f"{parsed_url.scheme}://{parsed_url.netloc}/{container_name}/{blob_name}{query_separator}{parsed_url.query}"
         
         # Download blob
         response = requests.get(blob_url)

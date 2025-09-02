@@ -1,6 +1,7 @@
 import logging
 import time
 import gc
+import numpy as np
 from typing import List, Optional, Tuple, Dict, Any
 from collections import defaultdict
 
@@ -115,6 +116,32 @@ class AccuracyOptimizedDeduplicator:
                     duplicate_groups.append(verified_group)
                     total_duplicates += len(verified_group) - 1  # Subtract 1 for the original
             
+            # Stage 3: Global feature refinement (cross-group analysis)
+            if progress_callback:
+                progress_callback("Stage 3: Global feature refinement...")
+            
+            if len(duplicate_groups) > 1:
+                global_refined_groups = self._global_feature_refinement(
+                    duplicate_groups, progress_callback
+                )
+                duplicate_groups = global_refined_groups
+                logger.info(f"Stage 3 completed: {len(duplicate_groups)} groups after global refinement")
+            else:
+                logger.info("⏭️  Skipping Stage 3 - no groups need global refinement")
+            
+            # Stage 4: Local feature verification (within-group refinement)
+            if progress_callback:
+                progress_callback("Stage 4: Local feature verification...")
+            
+            if any(len(group) > 1 for group in duplicate_groups):
+                local_verified_groups = self._local_feature_verification(
+                    duplicate_groups, progress_callback
+                )
+                duplicate_groups = local_verified_groups
+                logger.info(f"Stage 4 completed: {len(duplicate_groups)} groups after local verification")
+            else:
+                logger.info("⏭️  Skipping Stage 4 - no groups need local verification")
+            
             # Update stats
             processing_time = time.time() - start_time
             self.stats['total_images_processed'] += len(image_paths)
@@ -223,6 +250,155 @@ class AccuracyOptimizedDeduplicator:
         except Exception as e:
             logger.error(f"Group verification failed: {e}, returning original group")
             return group
+    
+    def _global_feature_refinement(self, groups: List[List[str]], 
+                                 progress_callback: Optional[callable] = None) -> List[List[str]]:
+        """
+        Stage 3: Global feature refinement using cross-group analysis.
+        
+        Args:
+            groups: List of image groups to refine
+            progress_callback: Optional callback for progress reporting
+            
+        Returns:
+            Refined list of image groups
+        """
+        if len(groups) <= 1:
+            return groups
+        
+        try:
+            if progress_callback:
+                progress_callback("Global refinement: Analyzing cross-group similarities...")
+            
+            refined_groups = []
+            processed_groups = set()
+            
+            for i, group in enumerate(groups):
+                if i in processed_groups:
+                    continue
+                
+                if progress_callback:
+                    progress_callback(f"Global refinement: Processing group {i+1}/{len(groups)}")
+                
+                # Find similar groups that might be merged
+                similar_groups = []
+                for j, other_group in enumerate(groups):
+                    if j <= i or j in processed_groups:
+                        continue
+                    
+                    # Check if groups should be merged based on hybrid similarity
+                    if self._should_merge_groups(group, other_group):
+                        similar_groups.append(j)
+                
+                # Merge similar groups
+                if similar_groups:
+                    merged_group = group.copy()
+                    for j in similar_groups:
+                        merged_group.extend(groups[j])
+                        processed_groups.add(j)
+                    
+                    refined_groups.append(merged_group)
+                    processed_groups.add(i)
+                    logger.info(f"Merged {len(similar_groups) + 1} groups into one with {len(merged_group)} images")
+                else:
+                    refined_groups.append(group)
+                    processed_groups.add(i)
+            
+            logger.info(f"Global refinement: {len(groups)} groups → {len(refined_groups)} groups")
+            return refined_groups
+            
+        except Exception as e:
+            logger.error(f"Global feature refinement failed: {e}")
+            return groups
+    
+    def _local_feature_verification(self, groups: List[List[str]], 
+                                  progress_callback: Optional[callable] = None) -> List[List[str]]:
+        """
+        Stage 4: Local feature verification within groups.
+        
+        Args:
+            groups: List of image groups to verify
+            progress_callback: Optional callback for progress reporting
+            
+        Returns:
+            Verified list of image groups
+        """
+        try:
+            if progress_callback:
+                progress_callback("Local verification: Refining within-group duplicates...")
+            
+            verified_groups = []
+            
+            for i, group in enumerate(groups):
+                if progress_callback:
+                    progress_callback(f"Local verification: Group {i+1}/{len(groups)} ({len(group)} images)")
+                
+                if len(group) <= 1:
+                    verified_groups.append(group)
+                    continue
+                
+                # Skip very large groups for local verification (too expensive)
+                if len(group) > self.max_group_size:
+                    logger.warning(f"Skipping local verification for large group with {len(group)} images (performance protection)")
+                    verified_groups.append(group)
+                    continue
+                
+                # Use hybrid similarity for final verification within the group
+                verified_group = self._verify_group_with_hybrid_similarity(
+                    group, progress_callback
+                )
+                
+                # Filter out single-image groups (local verification might split groups)
+                if len(verified_group) > 1:
+                    verified_groups.append(verified_group)
+                else:
+                    # Single image, add to a new single-image group
+                    verified_groups.append(verified_group)
+            
+            logger.info(f"Local verification: {len(groups)} groups → {len(verified_groups)} groups")
+            return verified_groups
+            
+        except Exception as e:
+            logger.error(f"Local feature verification failed: {e}")
+            return groups
+    
+    def _should_merge_groups(self, group1: List[str], group2: List[str]) -> bool:
+        """
+        Determine if two groups should be merged based on hybrid similarity.
+        
+        Args:
+            group1: First image group
+            group2: Second image group
+            
+        Returns:
+            True if groups should be merged, False otherwise
+        """
+        if not self.hybrid_calculator:
+            return False
+        
+        try:
+            # Sample images from each group for comparison
+            sample_size = min(3, len(group1), len(group2))
+            sample1 = group1[:sample_size]
+            sample2 = group2[:sample_size]
+            
+            # Check if any images from group1 are similar to any from group2
+            for img1 in sample1:
+                for img2 in sample2:
+                    try:
+                        similarity = self.hybrid_calculator.calculate_similarity(img1, img2)
+                        if similarity >= self.verification_threshold:
+                            logger.debug(f"Groups should be merged: {img1} ↔ {img2} (similarity: {similarity:.3f})")
+                            return True
+                    except Exception as e:
+                        logger.debug(f"Similarity calculation failed for {img1} ↔ {img2}: {e}")
+                        continue
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Group merge check failed: {e}")
+            return False
     
     def _verify_group_with_individual_similarity(self, group: List[str], 
                                                progress_callback: Optional[callable] = None) -> List[str]:
@@ -513,6 +689,83 @@ class AccuracyOptimizedDeduplicator:
             'average_time_per_image': 0.0
         }
     
+    def create_report(self, duplicate_groups: List[List[str]], 
+                     similarity_scores: Dict[Tuple[str, str], float],
+                     output_dir: str) -> str:
+        """Create a detailed report of all groups with quality scores and similarity information."""
+        try:
+            import pandas as pd
+            import os
+            
+            # Prepare data for DataFrame
+            data = []
+            
+            for group_idx, group in enumerate(duplicate_groups):
+                if len(group) == 0:
+                    continue
+                    
+                # Use first image as representative (best image)
+                best_image = group[0]
+                group_size = len(group)
+                
+                # Add best image entry
+                data.append({
+                    'Image Path': best_image,
+                    'Quality Score': 1.0,  # Representative gets perfect score
+                    'Group ID': group_idx + 1,
+                    'Group Size': group_size,
+                    'Status': 'Best',
+                    'Similarity Score': 1.0
+                })
+                
+                # Add duplicate entries
+                for i, dup_image in enumerate(group[1:], 1):
+                    # Get similarity score if available
+                    similarity_score = similarity_scores.get((best_image, dup_image), 0.0)
+                    if similarity_score == 0.0:
+                        # Try reverse order
+                        similarity_score = similarity_scores.get((dup_image, best_image), 0.0)
+                    
+                    data.append({
+                        'Image Path': dup_image,
+                        'Quality Score': 0.8,  # Duplicates get lower quality score
+                        'Group ID': group_idx + 1,
+                        'Group Size': group_size,
+                        'Status': 'Duplicate',
+                        'Similarity Score': similarity_score
+                    })
+                    
+            # Create DataFrame and sort by Group ID and Status (Best first)
+            df = pd.DataFrame(data)
+            df = df.sort_values(['Group ID', 'Status'], ascending=[True, False])
+            
+            # Format scores to 3 decimal places
+            df['Quality Score'] = df['Quality Score'].round(3)
+            df['Similarity Score'] = df['Similarity Score'].round(3)
+            
+            # Save to CSV
+            report_path = os.path.join(output_dir, "image_report.csv")
+            df.to_csv(report_path, index=False)
+            
+            # Log report statistics
+            total_images = len(df)
+            best_images = len(df[df['Status'] == 'Best'])
+            duplicate_images = len(df[df['Status'] == 'Duplicate'])
+            total_groups = df['Group ID'].nunique()
+            
+            logger.info(f"\nReport Statistics:")
+            logger.info(f"- Total Images: {total_images}")
+            logger.info(f"- Best Images: {best_images}")
+            logger.info(f"- Duplicate Images: {duplicate_images}")
+            logger.info(f"- Total Groups: {total_groups}")
+            logger.info(f"- Report saved to: {report_path}")
+            
+            return report_path
+            
+        except Exception as e:
+            logger.error(f"Error creating report: {e}")
+            return ""
+
     def release(self):
         """Release resources."""
         logger.info("Releasing accuracy-optimized deduplicator resources...")

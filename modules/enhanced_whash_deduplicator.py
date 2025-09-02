@@ -400,13 +400,17 @@ class EnhancedWHashDeduplicator:
             Loaded image array or None if failed
         """
         try:
-            # Try local loading first
+            # Check if this is a relative Azure path (starts with Image_Dedup_Project/)
+            if image_path.startswith('Image_Dedup_Project/'):
+                return self._load_azure_image(image_path)
+            
+            # Try local loading for non-Azure paths
             if not image_path.startswith('http'):
                 image = cv2.imread(image_path)
                 if image is not None:
                     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
-            # Try Azure loading if local failed or is Azure path
+            # Try Azure loading for full URLs
             if 'blob.core.windows.net' in image_path or image_path.startswith('https://'):
                 return self._load_azure_image(image_path)
             
@@ -428,10 +432,10 @@ class EnhancedWHashDeduplicator:
         """
         try:
             # Import Azure utilities
-            from modules.azure_utils import download_blob_to_memory
+            from modules.azure_utils import download_blob_to_memory, SAS_URL
             
             # Download image data
-            image_data = download_blob_to_memory(image_path)
+            image_data = download_blob_to_memory(image_path, SAS_URL)
             if image_data is None:
                 return None
             
@@ -460,6 +464,15 @@ class EnhancedWHashDeduplicator:
             Dictionary with performance metrics
         """
         return self.performance_stats.copy()
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get comprehensive statistics (alias for get_performance_stats).
+        
+        Returns:
+            Dictionary with performance metrics
+        """
+        return self.get_performance_stats()
     
     def reset_stats(self):
         """Reset performance statistics."""
