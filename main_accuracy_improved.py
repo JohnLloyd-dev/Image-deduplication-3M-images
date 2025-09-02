@@ -56,9 +56,9 @@ def create_accuracy_improved_pipeline():
         wavelet_name='haar',            # Haar wavelet for speed
         scale_factors=[0.5, 0.75, 1.0, 1.25, 1.5, 2.0],  # Multi-scale factors
         enable_lsh=True,                # Enable LSH for efficient grouping
-        lsh_bands=4,                    # 4 LSH bands
-        lsh_rows_per_band=4,           # 4 rows per band
-        similarity_threshold=0.85       # High threshold for initial grouping
+        lsh_bands=8,                    # Increased bands for 3M+ images
+        lsh_rows_per_band=3,           # Optimized rows for large dataset
+        similarity_threshold=0.75       # Balanced threshold for large dataset
     )
     
     # Step 2: Create structural similarity calculator
@@ -86,7 +86,7 @@ def create_accuracy_improved_pipeline():
             'whash': 0.60               # WHash threshold
         },
         enable_caching=True,            # Enable similarity caching
-        cache_size=10000                # Cache size for performance
+        cache_size=100000               # Increased cache size for 3M+ images
     )
     
     # Step 4: Create accuracy-optimized deduplicator
@@ -97,7 +97,7 @@ def create_accuracy_improved_pipeline():
         ssim_calculator=ssim_calculator,
         enable_verification=True,       # Enable duplicate verification
         verification_threshold=0.65,    # Threshold for verification
-        max_group_size=1000,           # Maximum size for verification groups
+        max_group_size=5000,           # Increased max group size for 3M+ images
         enable_caching=True             # Enable similarity caching
     )
     
@@ -128,12 +128,12 @@ def main():
         
         logger.info(f"✅ Found {len(image_paths)} images in target directory")
         
-        # For demonstration, use a subset of images first
-        if len(image_paths) > 1000:
-            logger.info(f"📊 Using first 1000 images for demonstration (total: {len(image_paths)})")
-            demo_images = image_paths[:1000]
-        else:
-            demo_images = image_paths
+        # Process ALL images in the dataset
+        logger.info(f"📊 Processing ALL {len(image_paths):,} images from the complete dataset")
+        logger.info(f"🎯 Expected processing time: 5-7 days for {len(image_paths):,} images")
+        logger.info(f"💾 Expected memory usage: ~200MB peak (group-based processing)")
+        logger.info(f"📈 Expected groups: ~{len(image_paths)//5:,} WHash groups")
+        all_images = image_paths
         
         # Create the accuracy-improved pipeline
         accuracy_deduplicator, whash_deduplicator, ssim_calculator, hybrid_calculator = create_accuracy_improved_pipeline()
@@ -146,7 +146,7 @@ def main():
         start_time = time.time()
         
         duplicate_groups = accuracy_deduplicator.find_duplicates(
-            image_paths=demo_images,
+            image_paths=all_images,
             progress_callback=lambda msg: logger.info(f"📊 {msg}")
         )
         
